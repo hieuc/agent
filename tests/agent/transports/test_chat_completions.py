@@ -146,6 +146,20 @@ class TestChatCompletionsBuildKwargs:
         assert kw["messages"][0]["content"] == "Hello"
         assert kw["timeout"] == 30.0
 
+    def test_litellm_session_metadata_is_top_level(self, transport, monkeypatch):
+        monkeypatch.delenv("HERMES_OUTBOUND_REQUEST_METADATA", raising=False)
+        monkeypatch.delenv("HERMES_LITELLM_SESSION_METADATA", raising=False)
+        kw = transport.build_kwargs(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            base_url="http://127.0.0.1:4000",
+            session_id="s1",
+        )
+        assert kw["metadata"]["session_id"] == "s1"
+        assert kw["metadata"]["hermes_session_id"] == "s1"
+        assert kw["extra_body"]["litellm_session_id"] == "s1"
+        assert "metadata" not in kw["extra_body"]
+
     def test_developer_role_swap(self, transport):
         msgs = [{"role": "system", "content": "You are helpful"}, {"role": "user", "content": "Hi"}]
         kw = transport.build_kwargs(model="gpt-5.4", messages=msgs, model_lower="gpt-5.4")

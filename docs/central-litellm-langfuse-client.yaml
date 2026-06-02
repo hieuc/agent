@@ -1,0 +1,43 @@
+# Minimal Hermes client config for centralized LiteLLM + Langfuse.
+#
+# This client does not need Langfuse keys or the Hermes Langfuse plugin.
+# It sends model traffic to the shared LiteLLM proxy. LiteLLM emits traces to
+# Langfuse, and Hermes adds dynamic request metadata so those traces are grouped
+# by Hermes session.
+
+model:
+  default: reasoning
+  provider: custom
+  base_url: http://beeps.local:4000
+  max_tokens: 8192
+
+providers:
+  custom:
+    request_timeout_seconds: 600
+
+model_aliases:
+  reasoning:
+    model: reasoning
+    provider: custom
+    base_url: http://beeps.local:4000
+  worker:
+    model: worker
+    provider: custom
+    base_url: http://beeps.local:4000
+  coding:
+    model: coding
+    provider: custom
+    base_url: http://beeps.local:4000
+
+observability:
+  # auto attaches metadata only when the base_url looks like local LiteLLM
+  # (port 4000). Set true if your shared LiteLLM is on a different port.
+  outbound_request_metadata: auto
+  # Give each machine/profile a stable label for Langfuse filtering.
+  client_id: change-me
+
+plugins:
+  # Keep this empty on normal clients. Langfuse tracing is centralized in
+  # LiteLLM, not emitted directly by every Hermes process.
+  enabled: []
+  disabled: []

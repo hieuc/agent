@@ -289,6 +289,8 @@ _EXTRA_ENV_KEYS = frozenset({
     "HERMES_LANGFUSE_SAMPLE_RATE",
     "HERMES_LANGFUSE_MAX_CHARS",
     "HERMES_LANGFUSE_DEBUG",
+    "HERMES_OUTBOUND_REQUEST_METADATA",
+    "HERMES_LITELLM_SESSION_METADATA",
     "LANGFUSE_PUBLIC_KEY",
     "LANGFUSE_SECRET_KEY",
     "LANGFUSE_BASE_URL",
@@ -815,7 +817,7 @@ DEFAULT_CONFIG = {
     # None/0 = unbounded.
     "max_concurrent_sessions": None,
     "agent": {
-        "max_turns": 90,
+        "max_turns": 60,
         # Inactivity timeout for gateway agent execution (seconds).
         # The agent can run indefinitely as long as it's actively calling
         # tools or receiving API responses.  Only fires when the agent has
@@ -2208,6 +2210,18 @@ DEFAULT_CONFIG = {
         "level": "INFO",       # Minimum level for agent.log: DEBUG, INFO, WARNING
         "max_size_mb": 5,      # Max size per log file before rotation
         "backup_count": 3,     # Number of rotated backup files to keep
+    },
+
+    # Centralized observability routed through OpenAI-compatible proxy providers.
+    # When enabled/auto, Hermes adds dynamic request metadata so proxy-side
+    # tracing, cost, and audit systems can group raw model requests by session.
+    "observability": {
+        # auto: attach only to local proxy-looking endpoints (port 4000)
+        # true/on: attach for every OpenAI-compatible chat-completions request
+        # false/off: never attach
+        "outbound_request_metadata": "auto",
+        # Optional stable label for this Hermes client. Empty uses hostname.
+        "client_id": "",
     },
 
     # Remotely-hosted model catalog manifest.  When enabled, the CLI fetches
@@ -4112,6 +4126,7 @@ _KNOWN_ROOT_KEYS = {
     "agent", "terminal", "display", "compression", "delegation",
     "auxiliary", "custom_providers", "context", "memory", "gateway",
     "sessions", "streaming", "updates",
+    "observability",
 }
 
 # Valid fields inside a custom_providers list entry
