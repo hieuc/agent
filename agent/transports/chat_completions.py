@@ -75,10 +75,39 @@ def _attach_outbound_request_metadata(
     metadata["hermes_session_id"] = session
     metadata.setdefault("source", "hermes")
     client_id = str(cfg.get("client_id") or "").strip() or socket.gethostname()
+    user_id = _outbound_request_user_id(metadata, cfg, client_id)
+    if user_id:
+        metadata.setdefault("trace_user_id", user_id)
+        metadata.setdefault("user_id", user_id)
+        metadata.setdefault("userId", user_id)
+        api_kwargs.setdefault("user", user_id)
     if client_id:
         metadata.setdefault("hermes_client", client_id)
     api_kwargs["metadata"] = metadata
     extra_body.setdefault("litellm_session_id", session)
+
+
+def _outbound_request_user_id(
+    metadata: dict[str, Any],
+    observability_config: dict[str, Any],
+    client_id: str,
+) -> str:
+    for key in ("trace_user_id", "user_id", "userId"):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value
+    try:
+        from gateway.session_context import get_session_env
+
+        session_user_id = str(get_session_env("HERMES_SESSION_USER_ID", "") or "").strip()
+    except Exception:
+        session_user_id = str(os.environ.get("HERMES_SESSION_USER_ID", "") or "").strip()
+    if session_user_id:
+        return session_user_id
+    configured_user_id = str(observability_config.get("user_id") or "").strip()
+    if configured_user_id:
+        return configured_user_id
+    return str(client_id or "").strip()
 
 
 def _build_gemini_thinking_config(model: str, reasoning_config: dict | None) -> dict | None:

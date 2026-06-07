@@ -149,6 +149,7 @@ class TestChatCompletionsBuildKwargs:
     def test_litellm_session_metadata_is_top_level(self, transport, monkeypatch):
         monkeypatch.delenv("HERMES_OUTBOUND_REQUEST_METADATA", raising=False)
         monkeypatch.delenv("HERMES_LITELLM_SESSION_METADATA", raising=False)
+        monkeypatch.delenv("HERMES_SESSION_USER_ID", raising=False)
         kw = transport.build_kwargs(
             model="gpt-4o",
             messages=[{"role": "user", "content": "Hello"}],
@@ -159,6 +160,76 @@ class TestChatCompletionsBuildKwargs:
         assert kw["metadata"]["hermes_session_id"] == "s1"
         assert kw["extra_body"]["litellm_session_id"] == "s1"
         assert "metadata" not in kw["extra_body"]
+
+    def test_litellm_user_id_falls_back_to_client_id(self, transport, monkeypatch):
+        monkeypatch.delenv("HERMES_OUTBOUND_REQUEST_METADATA", raising=False)
+        monkeypatch.delenv("HERMES_LITELLM_SESSION_METADATA", raising=False)
+        monkeypatch.delenv("HERMES_SESSION_USER_ID", raising=False)
+        kw = transport.build_kwargs(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            base_url="http://127.0.0.1:4000",
+            session_id="s1",
+            observability_config={"client_id": "beeps-mac"},
+        )
+        assert kw["metadata"]["trace_user_id"] == "beeps-mac"
+        assert kw["metadata"]["user_id"] == "beeps-mac"
+        assert kw["metadata"]["userId"] == "beeps-mac"
+        assert kw["user"] == "beeps-mac"
+
+    def test_litellm_user_id_metadata_is_top_level(self, transport, monkeypatch):
+        monkeypatch.delenv("HERMES_OUTBOUND_REQUEST_METADATA", raising=False)
+        monkeypatch.delenv("HERMES_LITELLM_SESSION_METADATA", raising=False)
+        monkeypatch.setenv("HERMES_SESSION_USER_ID", "user-123")
+        kw = transport.build_kwargs(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            base_url="http://127.0.0.1:4000",
+            session_id="s1",
+        )
+        assert kw["metadata"]["trace_user_id"] == "user-123"
+        assert kw["metadata"]["user_id"] == "user-123"
+        assert kw["metadata"]["userId"] == "user-123"
+        assert kw["user"] == "user-123"
+        assert "metadata" not in kw["extra_body"]
+
+    def test_litellm_user_id_metadata_uses_gateway_contextvar(self, transport, monkeypatch):
+        from gateway.session_context import clear_session_vars, set_session_vars
+
+        monkeypatch.delenv("HERMES_OUTBOUND_REQUEST_METADATA", raising=False)
+        monkeypatch.delenv("HERMES_LITELLM_SESSION_METADATA", raising=False)
+        monkeypatch.setenv("HERMES_SESSION_USER_ID", "stale-env-user")
+        tokens = set_session_vars(platform="discord", user_id="discord-123456789")
+        try:
+            kw = transport.build_kwargs(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": "Hello"}],
+                base_url="http://127.0.0.1:4000",
+                session_id="s1",
+                observability_config={"client_id": "beeps-mac"},
+            )
+        finally:
+            clear_session_vars(tokens)
+        assert kw["metadata"]["trace_user_id"] == "discord-123456789"
+        assert kw["metadata"]["user_id"] == "discord-123456789"
+        assert kw["metadata"]["userId"] == "discord-123456789"
+        assert kw["user"] == "discord-123456789"
+
+    def test_litellm_user_id_metadata_preserves_existing_trace_user_id(self, transport, monkeypatch):
+        monkeypatch.delenv("HERMES_OUTBOUND_REQUEST_METADATA", raising=False)
+        monkeypatch.delenv("HERMES_LITELLM_SESSION_METADATA", raising=False)
+        monkeypatch.setenv("HERMES_SESSION_USER_ID", "gateway-user")
+        kw = transport.build_kwargs(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Hello"}],
+            base_url="http://127.0.0.1:4000",
+            session_id="s1",
+            request_overrides={"metadata": {"trace_user_id": "explicit-user"}},
+        )
+        assert kw["metadata"]["trace_user_id"] == "explicit-user"
+        assert kw["metadata"]["user_id"] == "explicit-user"
+        assert kw["metadata"]["userId"] == "explicit-user"
+        assert kw["user"] == "explicit-user"
 
     def test_developer_role_swap(self, transport):
         msgs = [{"role": "system", "content": "You are helpful"}, {"role": "user", "content": "Hi"}]
