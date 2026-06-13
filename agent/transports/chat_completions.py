@@ -10,13 +10,104 @@ reasoning configuration, temperature handling, and extra_body assembly.
 """
 
 import copy
+import os
+import socket
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 from agent.lmstudio_reasoning import resolve_lmstudio_effort
 from agent.moonshot_schema import is_moonshot_model, sanitize_moonshot_tools
 from agent.prompt_builder import DEVELOPER_ROLE_MODELS
 from agent.transports.base import ProviderTransport
 from agent.transports.types import NormalizedResponse, ToolCall, Usage
+
+
+def _flag_value(value: Any, default: str = "auto") -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value if value not in (None, "") else default).strip().lower()
+
+
+def _should_attach_outbound_request_metadata(
+    base_url: Any,
+    observability_config: Any = None,
+) -> bool:
+    """Return whether this request should carry Hermes session metadata."""
+    cfg = observability_config if isinstance(observability_config, dict) else {}
+    flag = _flag_value(
+        cfg.get("outbound_request_metadata", cfg.get("litellm_session_metadata", "auto"))
+    )
+    env_override = os.environ.get("HERMES_OUTBOUND_REQUEST_METADATA")
+    if env_override in (None, ""):
+        env_override = os.environ.get("HERMES_LITELLM_SESSION_METADATA")
+    if env_override not in (None, ""):
+        flag = _flag_value(env_override)
+    if flag in {"1", "true", "yes", "on"}:
+        return True
+    if flag in {"0", "false", "no", "off"}:
+        return False
+
+    try:
+        parsed = urlparse(str(base_url or ""))
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    if parsed.port != 4000:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local")
+
+
+def _attach_outbound_request_metadata(
+    api_kwargs: dict[str, Any],
+    extra_body: dict[str, Any],
+    *,
+    base_url: Any,
+    session_id: Any,
+    observability_config: Any = None,
+) -> None:
+    session = str(session_id or "").strip()
+    cfg = observability_config if isinstance(observability_config, dict) else {}
+    if not session or not _should_attach_outbound_request_metadata(base_url, cfg):
+        return
+    metadata = api_kwargs.get("metadata")
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    metadata.setdefault("session_id", session)
+    metadata["hermes_session_id"] = session
+    metadata.setdefault("source", "hermes")
+    client_id = str(cfg.get("client_id") or "").strip() or socket.gethostname()
+    user_id = _outbound_request_user_id(metadata, cfg, client_id)
+    if user_id:
+        metadata.setdefault("trace_user_id", user_id)
+        metadata.setdefault("user_id", user_id)
+        metadata.setdefault("userId", user_id)
+        api_kwargs.setdefault("user", user_id)
+    if client_id:
+        metadata.setdefault("hermes_client", client_id)
+    api_kwargs["metadata"] = metadata
+    extra_body.setdefault("litellm_session_id", session)
+
+
+def _outbound_request_user_id(
+    metadata: dict[str, Any],
+    observability_config: dict[str, Any],
+    client_id: str,
+) -> str:
+    for key in ("trace_user_id", "user_id", "userId"):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value
+    try:
+        from gateway.session_context import get_session_env
+
+        session_user_id = str(get_session_env("HERMES_SESSION_USER_ID", "") or "").strip()
+    except Exception:
+        session_user_id = str(os.environ.get("HERMES_SESSION_USER_ID", "") or "").strip()
+    if session_user_id:
+        return session_user_id
+    configured_user_id = str(observability_config.get("user_id") or "").strip()
+    if configured_user_id:
+        return configured_user_id
+    return str(client_id or "").strip()
 
 
 def _build_gemini_thinking_config(model: str, reasoning_config: dict | None) -> dict | None:
@@ -445,13 +536,24 @@ class ChatCompletionsTransport(ProviderTransport):
         if additions:
             extra_body.update(additions)
 
-        if extra_body:
-            api_kwargs["extra_body"] = extra_body
-
         # Request overrides last (service_tier etc.)
         overrides = params.get("request_overrides")
         if overrides:
-            api_kwargs.update(overrides)
+            for k, v in overrides.items():
+                if k == "extra_body" and isinstance(v, dict):
+                    extra_body.update(v)
+                else:
+                    api_kwargs[k] = v
+
+        _attach_outbound_request_metadata(
+            api_kwargs,
+            extra_body,
+            base_url=params.get("base_url"),
+            session_id=params.get("session_id"),
+            observability_config=params.get("observability_config"),
+        )
+        if extra_body:
+            api_kwargs["extra_body"] = extra_body
 
         return api_kwargs
 
@@ -570,6 +672,13 @@ class ChatCompletionsTransport(ProviderTransport):
                 else:
                     api_kwargs[k] = v
 
+        _attach_outbound_request_metadata(
+            api_kwargs,
+            extra_body,
+            base_url=params.get("base_url"),
+            session_id=params.get("session_id"),
+            observability_config=params.get("observability_config"),
+        )
         if extra_body:
             # Native Gemini (generativelanguage.googleapis.com, non-/openai)
             # speaks Google's REST schema, not OpenAI's. OpenAI-style extra_body

@@ -26,6 +26,7 @@ Four schedule formats are supported:
 |--------|---------|----------|
 | **Relative delay** | `30m`, `2h`, `1d` | One-shot, fires after the specified duration |
 | **Interval** | `every 2h`, `every 30m` | Recurring, fires at regular intervals |
+| **Delayed interval** | `every 5h starting in 2.5h` | Recurring interval with the first run delayed separately |
 | **Cron expression** | `0 9 * * *` | Standard 5-field cron syntax (minute, hour, day, month, weekday) |
 | **ISO timestamp** | `2025-01-15T09:00:00` | One-shot, fires at the exact time |
 

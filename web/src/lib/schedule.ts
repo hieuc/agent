@@ -6,6 +6,7 @@
  *
  *   - Duration (one-shot):       "30m", "2h", "1d"
  *   - Interval (recurring):      "every 30m", "every 2h", "every 1d"
+ *   - Delayed interval:          "every 5h starting in 2.5h"
  *   - Cron expression (5-field): "0 9 * * *", "30 14 * * 1,3,5"
  *   - ISO timestamp (one-shot):  "2026-02-03T14:00:00"
  *
@@ -195,6 +196,7 @@ export interface ScheduleLike {
   kind?: string;
   expr?: string;
   minutes?: number;
+  start_at?: string;
   run_at?: string;
   display?: string;
 }

@@ -29,9 +29,10 @@ _TITLE_PROMPT = (
 def generate_title(
     user_message: str,
     assistant_response: str,
-    timeout: float = 30.0,
+    timeout: Optional[float] = None,
     failure_callback: Optional[FailureCallback] = None,
     main_runtime: dict = None,
+    session_id: Optional[str] = None,
 ) -> Optional[str]:
     """Generate a session title from the first exchange.
 
@@ -61,6 +62,17 @@ def generate_title(
             temperature=0.3,
             timeout=timeout,
             main_runtime=main_runtime,
+            extra_body=(
+                {
+                    "metadata": {
+                        "session_id": session_id,
+                        "hermes_session_id": session_id,
+                        "source": "hermes",
+                    }
+                }
+                if session_id
+                else None
+            ),
         )
         title = (response.choices[0].message.content or "").strip()
         # Clean up: remove quotes, trailing punctuation, prefixes like "Title: "
@@ -113,7 +125,11 @@ def auto_title_session(
         return
 
     title = generate_title(
-        user_message, assistant_response, failure_callback=failure_callback, main_runtime=main_runtime
+        user_message,
+        assistant_response,
+        failure_callback=failure_callback,
+        main_runtime=main_runtime,
+        session_id=session_id,
     )
     if not title:
         return

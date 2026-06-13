@@ -36,6 +36,7 @@ Cron-run sessions cannot recursively create more cron jobs. Hermes disables cron
 ```bash
 /cron add 30m "Remind me to check the build"
 /cron add "every 2h" "Check server status"
+/cron add "every 5h starting in 2.5h" "Check server status"
 /cron add "every 1h" "Summarize new feed items" --skill blogwatcher
 /cron add "every 1h" "Use both skills and combine the result" --skill blogwatcher --skill maps
 ```
@@ -44,6 +45,7 @@ Cron-run sessions cannot recursively create more cron jobs. Hermes disables cron
 
 ```bash
 hermes cron create "every 2h" "Check server status"
+hermes cron create "every 5h starting in 2.5h" "Check server status"
 hermes cron create "every 1h" "Summarize new feed items" --skill blogwatcher
 hermes cron create "every 1h" "Use both skills and combine the result" \
   --skill blogwatcher \
@@ -125,35 +127,6 @@ When `workdir` is set:
 Jobs with a `workdir` run sequentially on the scheduler tick, not in the parallel pool. This is deliberate: the cron worker applies the job workdir through process-global terminal state, so two workdir jobs running at the same time would corrupt each other's cwd. Workdir-less jobs still run in parallel as before.
 :::
 
-## Running cron jobs in a specific profile
-
-By default a cron job inherits whichever Hermes profile owned the gateway / CLI that created it. Pass `--profile <name>` (CLI) or `profile=` (cronjob tool) to re-target the job at a different profile — the scheduler resolves that profile's `HERMES_HOME`, temporarily switches into it for the duration of the run, loads its `.env` + `config.yaml`, and executes the job there:
-
-```bash
-# Pin a job to the `night-ops` profile regardless of where it was scheduled
-hermes cron create "every 1d at 03:00" \
-  "Tail the security log and flag anomalies" \
-  --profile night-ops
-```
-
-```python
-# From a chat, via the cronjob tool
-cronjob(
-    action="create",
-    schedule="every 1d at 03:00",
-    prompt="Tail the security log and flag anomalies",
-    profile="night-ops",
-)
-```
-
-Use `--profile default` to explicitly pin to the root Hermes profile. The named profile must already exist; the scheduler refuses to create profiles on the fly. To clear a profile pin during `cron edit`, pass an empty string (`--profile ""` or `profile=""`) — the job reverts to running in whatever profile the scheduler itself is in.
-
-If the pinned profile is later deleted, the scheduler logs a warning and falls back to running the job in its current profile rather than crashing — so a stale `profile` reference never wedges a job.
-
-:::note Serialization
-Jobs with a `profile` set also run sequentially, for the same reason as `workdir`-pinned jobs: switching `HERMES_HOME` is a process-global mutation, so two profile-pinned jobs running in parallel would race each other. Unpinned jobs still run in the normal parallel pool.
-:::
-
 ## Editing jobs
 
 You do not need to delete and recreate jobs just to change them.
@@ -223,7 +196,7 @@ What they do:
 - `resume` — re-enable the job and compute the next future run
 - `run` — trigger the job on the next scheduler tick
 - `remove` — delete it entirely
-- `edit` — modify schedule, prompt, profile, delivery, etc.
+- `edit` — modify schedule, prompt, delivery, etc.
 
 **Name-based lookup.** All four mutating verbs (`pause`, `resume`, `run`, `remove`, `edit`) plus the agent's `cronjob` tool now accept a job **name** (case-insensitive) in place of the hex ID. The agent and CLI both prefer an exact ID match if one exists; ambiguous name matches (multiple jobs sharing the same name) are refused with the full list of candidate IDs so you can pick one explicitly. Names are not unique, so this guard is load-bearing — it prevents silently mutating the wrong job when two share a name.
 
@@ -476,6 +449,13 @@ The agent's final response is automatically delivered — you do **not** need to
 every 30m    → Every 30 minutes
 every 2h     → Every 2 hours
 every 1d     → Every day
+```
+
+Add `starting in <delay>` when the first run should be offset from the recurring cadence:
+
+```text
+every 5h starting in 2.5h    -> First run in 2.5 hours, then every 5 hours
+every 5h starting in 2h30m   -> First run in 2 hours 30 minutes, then every 5 hours
 ```
 
 ### Cron expressions

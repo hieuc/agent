@@ -38,10 +38,17 @@ class TestParseDuration:
 
     def test_hours(self):
         assert parse_duration("2h") == 120
+        assert parse_duration("2.5h") == 150
+        assert parse_duration("0.5h") == 30
         assert parse_duration("1hr") == 60
         assert parse_duration("3hrs") == 180
         assert parse_duration("1hour") == 60
         assert parse_duration("24hours") == 1440
+
+    def test_compound(self):
+        assert parse_duration("2h30m") == 150
+        assert parse_duration("2 h 30 m") == 150
+        assert parse_duration("1d2h30m") == 1590
 
     def test_days(self):
         assert parse_duration("1d") == 1440
@@ -61,6 +68,8 @@ class TestParseDuration:
             parse_duration("")
         with pytest.raises(ValueError):
             parse_duration("m30")
+        with pytest.raises(ValueError):
+            parse_duration("1.5m")
 
 
 # =========================================================================
@@ -84,6 +93,18 @@ class TestParseSchedule:
         result = parse_schedule("every 2h")
         assert result["kind"] == "interval"
         assert result["minutes"] == 120
+
+    def test_every_with_delayed_start(self, monkeypatch):
+        now = datetime(2026, 6, 13, 9, 0, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        result = parse_schedule("every 5h starting in 2.5h")
+
+        assert result["kind"] == "interval"
+        assert result["minutes"] == 300
+        assert result["start_delay_minutes"] == 150
+        assert result["start_at"] == "2026-06-13T11:30:00+00:00"
+        assert result["display"] == "every 300m; first run at 2026-06-13T11:30:00+00:00"
 
     def test_every_case_insensitive(self):
         result = parse_schedule("Every 30m")
@@ -151,6 +172,17 @@ class TestComputeNextRun:
         # Should be ~60 minutes from now
         assert next_dt > datetime.now().astimezone() + timedelta(minutes=59)
 
+    def test_interval_delayed_first_run(self, monkeypatch):
+        now = datetime(2026, 6, 13, 9, 0, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+        schedule = {
+            "kind": "interval",
+            "minutes": 300,
+            "start_at": "2026-06-13T11:30:00+00:00",
+        }
+
+        assert compute_next_run(schedule) == "2026-06-13T11:30:00+00:00"
+
     def test_interval_subsequent_run(self):
         schedule = {"kind": "interval", "minutes": 30}
         last = datetime.now().astimezone().isoformat()
@@ -158,6 +190,18 @@ class TestComputeNextRun:
         next_dt = datetime.fromisoformat(result)
         # Should be ~30 minutes from last run
         assert next_dt > datetime.now().astimezone() + timedelta(minutes=29)
+
+    def test_interval_delayed_start_ignored_after_first_run(self, monkeypatch):
+        now = datetime(2026, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+        schedule = {
+            "kind": "interval",
+            "minutes": 300,
+            "start_at": "2026-06-13T11:30:00+00:00",
+        }
+        last = "2026-06-13T11:30:00+00:00"
+
+        assert compute_next_run(schedule, last_run_at=last) == "2026-06-13T16:30:00+00:00"
 
     def test_cron_returns_future(self):
         pytest.importorskip("croniter")
@@ -224,6 +268,30 @@ class TestJobCRUD:
         assert jobs[0]["schedule_display"] == "every 60m"
         assert jobs[0]["state"] == "scheduled"
 
+    def test_list_jobs_rewrites_delayed_interval_display(self, tmp_cron_dir):
+        save_jobs([
+            {
+                "id": "abc123deadbe",
+                "name": "delayed",
+                "prompt": "ok",
+                "schedule": {
+                    "kind": "interval",
+                    "minutes": 300,
+                    "start_at": "2026-06-13T11:30:00+00:00",
+                    "display": "every 300m starting in 150m",
+                },
+                "schedule_display": "every 300m starting in 150m",
+                "enabled": True,
+            }
+        ])
+
+        jobs = list_jobs()
+
+        assert (
+            jobs[0]["schedule_display"]
+            == "every 300m; first run at 2026-06-13T11:30:00+00:00"
+        )
+
     def test_remove_job(self, tmp_cron_dir):
         job = create_job(prompt="Temp job", schedule="30m")
         assert remove_job(job["id"]) is True
@@ -256,6 +324,16 @@ class TestJobCRUD:
     def test_interval_no_auto_repeat(self, tmp_cron_dir):
         job = create_job(prompt="Recurring", schedule="every 1h")
         assert job["repeat"]["times"] is None
+
+    def test_interval_delayed_start_next_run(self, tmp_cron_dir, monkeypatch):
+        now = datetime(2026, 6, 13, 9, 0, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr("cron.jobs._hermes_now", lambda: now)
+
+        job = create_job(prompt="Recurring", schedule="every 5h starting in 2.5h")
+
+        assert job["schedule"]["kind"] == "interval"
+        assert job["schedule"]["minutes"] == 300
+        assert job["next_run_at"] == "2026-06-13T11:30:00+00:00"
 
     def test_default_delivery_origin(self, tmp_cron_dir):
         job = create_job(
