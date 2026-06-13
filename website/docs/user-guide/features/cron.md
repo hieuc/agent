@@ -36,6 +36,7 @@ Cron-run sessions cannot recursively create more cron jobs. Hermes disables cron
 ```bash
 /cron add 30m "Remind me to check the build"
 /cron add "every 2h" "Check server status"
+/cron add "every 5h starting in 2.5h" "Check server status"
 /cron add "every 1h" "Summarize new feed items" --skill blogwatcher
 /cron add "every 1h" "Use both skills and combine the result" --skill blogwatcher --skill maps
 ```
@@ -44,6 +45,7 @@ Cron-run sessions cannot recursively create more cron jobs. Hermes disables cron
 
 ```bash
 hermes cron create "every 2h" "Check server status"
+hermes cron create "every 5h starting in 2.5h" "Check server status"
 hermes cron create "every 1h" "Summarize new feed items" --skill blogwatcher
 hermes cron create "every 1h" "Use both skills and combine the result" \
   --skill blogwatcher \
@@ -447,6 +449,13 @@ The agent's final response is automatically delivered — you do **not** need to
 every 30m    → Every 30 minutes
 every 2h     → Every 2 hours
 every 1d     → Every day
+```
+
+Add `starting in <delay>` when the first run should be offset from the recurring cadence:
+
+```text
+every 5h starting in 2.5h    -> First run in 2.5 hours, then every 5 hours
+every 5h starting in 2h30m   -> First run in 2 hours 30 minutes, then every 5 hours
 ```
 
 ### Cron expressions

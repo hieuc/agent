@@ -28,7 +28,8 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
         "create", aliases=["add"], help="Create a scheduled job"
     )
     cron_create.add_argument(
-        "schedule", help="Schedule like '30m', 'every 2h', or '0 9 * * *'"
+        "schedule",
+        help="Schedule like '30m', 'every 2h', 'every 5h starting in 2.5h', or '0 9 * * *'",
     )
     cron_create.add_argument(
         "prompt", nargs="?", help="Optional self-contained prompt or task instruction"

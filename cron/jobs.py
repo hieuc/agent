@@ -14,6 +14,7 @@ import threading
 import os
 import re
 import uuid
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta
 from pathlib import Path
 from hermes_constants import get_hermes_home
@@ -101,12 +102,30 @@ def _coerce_job_text(value: Any, fallback: str = "") -> str:
     return str(value)
 
 
+def _delayed_interval_display(schedule: Dict[str, Any]) -> Optional[str]:
+    """Return a non-relative display for interval jobs with delayed first runs."""
+    if schedule.get("kind") != "interval" or not schedule.get("start_at"):
+        return None
+
+    minutes = schedule.get("minutes")
+    if minutes is None:
+        base = "interval"
+    else:
+        base = f"every {minutes}m"
+    return f"{base}; first run at {schedule['start_at']}"
+
+
 def _schedule_display_for_job(job: Dict[str, Any]) -> str:
+    schedule = job.get("schedule")
+    if isinstance(schedule, dict):
+        delayed_interval_display = _delayed_interval_display(schedule)
+        if delayed_interval_display:
+            return delayed_interval_display
+
     display = _coerce_job_text(job.get("schedule_display")).strip()
     if display:
         return display
 
-    schedule = job.get("schedule")
     if isinstance(schedule, dict):
         for key in ("display", "value", "expr", "run_at"):
             text = _coerce_job_text(schedule.get(key)).strip()
@@ -182,6 +201,20 @@ def ensure_dirs():
 # Schedule Parsing
 # =============================================================================
 
+_DURATION_TOKEN_RE = re.compile(
+    r"(?P<value>\d+(?:\.\d+)?)\s*"
+    r"(?P<unit>minutes?|mins?|m|hours?|hrs?|h|days?|d)",
+    re.IGNORECASE,
+)
+
+
+def _duration_error(original: str) -> ValueError:
+    return ValueError(
+        f"Invalid duration: '{original}'. Use format like '30m', '2h', "
+        "'2.5h', '2h30m', or '1d'"
+    )
+
+
 def parse_duration(s: str) -> int:
     """
     Parse duration string into minutes.
@@ -191,16 +224,40 @@ def parse_duration(s: str) -> int:
         "2h" → 120
         "1d" → 1440
     """
+    original = s
     s = s.strip().lower()
-    match = re.match(r'^(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)$', s)
-    if not match:
-        raise ValueError(f"Invalid duration: '{s}'. Use format like '30m', '2h', or '1d'")
-    
-    value = int(match.group(1))
-    unit = match.group(2)[0]  # First char: m, h, or d
-    
-    multipliers = {'m': 1, 'h': 60, 'd': 1440}
-    return value * multipliers[unit]
+    if not s:
+        raise _duration_error(original)
+
+    total = Decimal(0)
+    pos = 0
+    matched = False
+    multipliers = {'m': Decimal(1), 'h': Decimal(60), 'd': Decimal(1440)}
+
+    for match in _DURATION_TOKEN_RE.finditer(s):
+        if s[pos:match.start()].strip():
+            raise _duration_error(original)
+        pos = match.end()
+        matched = True
+
+        try:
+            value = Decimal(match.group("value"))
+        except InvalidOperation:
+            raise _duration_error(original) from None
+
+        unit = match.group("unit")[0]
+        total += value * multipliers[unit]
+
+    if not matched or s[pos:].strip() or total <= 0:
+        raise _duration_error(original)
+
+    whole_minutes = total.to_integral_value()
+    if total != whole_minutes:
+        raise ValueError(
+            f"Invalid duration: '{original}'. Duration must resolve to whole minutes."
+        )
+
+    return int(whole_minutes)
 
 
 def parse_schedule(schedule: str) -> Dict[str, Any]:
@@ -228,12 +285,39 @@ def parse_schedule(schedule: str) -> Dict[str, Any]:
     # "every X" pattern → recurring interval
     if schedule_lower.startswith("every "):
         duration_str = schedule[6:].strip()
+        start_delay_str = None
+        delayed_match = re.match(
+            r"^(?P<interval>.+?)\s+"
+            r"(?:starting|starts?|start)\s+(?:in|after)\s+"
+            r"(?P<delay>.+)$",
+            duration_str,
+            flags=re.IGNORECASE,
+        )
+        if delayed_match:
+            duration_str = delayed_match.group("interval").strip()
+            start_delay_str = delayed_match.group("delay").strip()
+
         minutes = parse_duration(duration_str)
-        return {
+        parsed = {
             "kind": "interval",
             "minutes": minutes,
             "display": f"every {minutes}m"
         }
+
+        if start_delay_str:
+            start_delay_minutes = parse_duration(start_delay_str)
+            start_at = _hermes_now() + timedelta(minutes=start_delay_minutes)
+            parsed.update({
+                "start_at": start_at.isoformat(),
+                "start_delay_minutes": start_delay_minutes,
+                "display": _delayed_interval_display({
+                    "kind": "interval",
+                    "minutes": minutes,
+                    "start_at": start_at.isoformat(),
+                }),
+            })
+
+        return parsed
     
     # Check for cron expression (5 or 6 space-separated fields)
     # Cron fields: minute hour day month weekday [year]
@@ -388,6 +472,11 @@ def compute_next_run(schedule: Dict[str, Any], last_run_at: Optional[str] = None
             last = _ensure_aware(datetime.fromisoformat(last_run_at))
             next_run = last + timedelta(minutes=minutes)
         else:
+            start_at = schedule.get("start_at")
+            if start_at:
+                start_at_dt = _ensure_aware(datetime.fromisoformat(start_at))
+                if start_at_dt > now:
+                    return start_at_dt.isoformat()
             # First run is now + interval
             next_run = now + timedelta(minutes=minutes)
         return next_run.isoformat()

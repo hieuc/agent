@@ -29,6 +29,7 @@ A misformatted schedule silently defaults to one-shot or is rejected entirely. T
 | `0 9 * * *` | 9:00 AM every day |
 | `0 9 * * 1` | 9:00 AM every Monday |
 | `every 2h` | Every 2 hours from now |
+| `every 5h starting in 2.5h` | First run in 2.5 hours, then every 5 hours |
 | `30m` | 30 minutes from now |
 | `2025-06-01T09:00:00` | June 1, 2025 at 9:00 AM UTC |
 
